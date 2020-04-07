@@ -17,10 +17,12 @@ import gym_SmartLoader.envs
 import time
 import numpy as np
 import csv
+from pynput import keyboard
 
 n_steps = 0
 save_interval = 2000
 best_mean_reward = -np.inf
+recorder_on = True
 
 def save_fn(_locals, _globals):
     global model, n_steps, best_mean_reward, best_model_path, last_model_path
@@ -43,9 +45,9 @@ def save_fn(_locals, _globals):
 
 def data_saver(obs, act, rew, dones, ep_rew):
 
-    np.save('/home/graphics/git/SmartLoader/saved_ep/obs', obs)
-    np.save('/home/graphics/git/SmartLoader/saved_ep/act', act)
-    np.save('/home/graphics/git/SmartLoader/saved_ep/rew', rew)
+    np.save('/home/graphics/git/SmartLoader/saved_ep_hist/obs', obs)
+    np.save('/home/graphics/git/SmartLoader/saved_ep_hist/act', act)
+    np.save('/home/graphics/git/SmartLoader/saved_ep_hist/rew', rew)
 
     starts = [False] * len(dones)
     starts[0] = True
@@ -54,11 +56,21 @@ def data_saver(obs, act, rew, dones, ep_rew):
         if dones[i]:
             starts[i + 1] = True
 
-    np.save('/home/graphics/git/SmartLoader/saved_ep/ep_str', ep_str)
-    np.save('/home/graphics/git/SmartLoader/saved_ep/ep_ret', ep_rew)
+    np.save('/home/graphics/git/SmartLoader/saved_ep_hist/ep_str', starts)
+    np.save('/home/graphics/git/SmartLoader/saved_ep_hist/ep_ret', ep_rew)
+
+def on_press(key):
+    global recorder_on
+    if key.char == 'r':
+        if recorder_on == False:
+            print('start recording')
+            recorder_on = True
+        else:
+            print('stop recording')
+            recorder_on = False
 
 def main():
-    global model, best_model_path, last_model_path
+    global model, best_model_path, last_model_path, recorder_on
 
 
     jobs = ['train', 'record', 'BC_agent' , 'play']
@@ -183,7 +195,7 @@ def main():
         mission = 'PushStonesEnv'
         env = gym.make(mission + '-v0').unwrapped
 
-        num_episodes = 10
+        num_episodes = 30
 
         obs = []
         actions = []
@@ -191,35 +203,42 @@ def main():
         dones = []
         episode_rewards = []
 
+        listener = keyboard.Listener(
+            on_press=on_press)
+        listener.start()
+
         for episode in range(num_episodes):
 
             ob = env.reset()
             done = False
-            print('Episode number ', episode)
+            print('Episode number ', episode, '============ START RECORDING ============')
             episode_reward = 0
 
             while not done:
 
                 act = "recording"
-                new_ob, reward, done, action = env.step(act)
+                new_ob, reward, done, info = env.step(act)
 
                 # ind = [0, 1, 2, 18, 21, 24]
-                ind = [0, 1, 2]
+                # ind = [0, 1, 2]
                 # print(ob)
-
-                obs.append(ob)
-                actions.append(action)
-                rewards.append(reward)
-                dones.append(done)
-                episode_reward = episode_reward + reward
+                # print(info['action'])
+                if recorder_on:
+                    obs.append(ob)
+                    actions.append(info['action'])
+                    rewards.append(reward)
+                    dones.append(done)
+                    episode_reward = episode_reward + reward
 
                 ob = new_ob
 
             episode_rewards.append(episode_reward)
 
+            data_saver(obs, actions, rewards, dones, episode_rewards)
 
 
-        data_saver(obs, actions, rewards, dones, episode_rewards)
+
+
 
     elif job == 'play':
         # env = gym.make('PickUpEnv-v0')

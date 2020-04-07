@@ -28,10 +28,12 @@ from std_msgs.msg import String
 from sensor_msgs.msg import Joy
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import PoseStamped, TwistStamped
+from scipy.spatial.transform import Rotation
 
 
 
 class BaseEnv(gym.Env):
+
 
     def VehiclePositionCB(self,stamped_pose):
         # new_stamped_pose = urw.positionROS2RW(stamped_pose)
@@ -187,7 +189,7 @@ class BaseEnv(gym.Env):
         return agent_action
 
 
-    def __init__(self,numStones=3):
+    def __init__(self,numStones=1):
         super(BaseEnv, self).__init__()
 
         print('environment created!')
@@ -203,6 +205,8 @@ class BaseEnv(gym.Env):
         self.time_step = []
         self.last_obs = np.array([])
         self.TIME_STEP = 0.05 # 10 mili-seconds
+
+        self.hist_size = 5
 
         self.normalized = True
 
@@ -349,6 +353,7 @@ class BaseEnv(gym.Env):
         self.steps = 0
         self.total_reward = 0
         self.boarders = []
+        self.obs = []
 
         # initial state depends on environment (mission)
         self.init_env()
@@ -373,23 +378,25 @@ class BaseEnv(gym.Env):
 
         self.stone_ref = self.stones['StonePos{}'.format(self.numStones + 1)]
 
-        # # blade down near ground
-        # for _ in range(30000):
-        #     self.blade_down()
+        # correct blade pitch
+        # self.pitch_up()
+
         # DESIRED_ARM_HEIGHT = 22
         # while self.world_state['ArmHeight'] > DESIRED_ARM_HEIGHT:
         #     self.blade_down()
 
         # get observation from simulation
-        obs = self.current_obs() # without waiting for obs to updated
+        for _ in range(self.hist_size):
+            self.obs.append(self.current_obs())
 
-        self.init_dis = np.sqrt(np.sum(np.power(obs[0:3], 2)))
+
+        self.init_dis = np.sqrt(np.sum(np.power(self.current_obs()[0:3], 2)))
 
         self.boarders = self.scene_boarders()
 
         self.joycon = 'waiting'
 
-        return obs
+        return np.array(self.obs).flatten()
 
 
     def step(self, action):
@@ -419,7 +426,14 @@ class BaseEnv(gym.Env):
             self.do_action(action)
 
         # get observation from simulation
-        obs = self.current_obs()
+        self.obs.pop(0)
+        self.obs.append(self.current_obs())
+
+
+        # quat = self.world_state['BladeOrien']
+        # quat = self.world_state['VehicleOrienIMU']
+        # r_blade = Rotation.from_quat(quat)
+        # print('quat: ', quat, 'eul: ', r_blade.as_euler('xyz', degrees=True))
 
         # calc step reward and add to total
         r_t = self.reward_func()
@@ -435,28 +449,30 @@ class BaseEnv(gym.Env):
             self.stones = {}
             print('stone to desired distance =', self.init_dis, ', total reward = ', self.total_reward)
 
-        info = {"state": obs, "action": action, "reward": self.total_reward, "step": self.steps, "reset reason": reset}
+        info = {"state": self.obs, "action": action, "reward": self.total_reward, "step": self.steps, "reset reason": reset}
 
-        return obs, step_reward, done, info
+        return np.array(self.obs).flatten(), step_reward, done, info
 
-    def blade_down(self):
-        # take blade down near ground at beginning of episode
+    def pitch_up(self):
+        for _ in range(7500):
             joymessage = Joy()
-            joymessage.axes = [0., 0., 1., 0., -0.3, 1., 0., 0.]
+            joymessage.axes = [0., 0., 1., 1, -0, 1., 0., 0.]
             self.joypub.publish(joymessage)
+        joymessage.axes = [0., 0., 1., 0, -0, 1., 0., 0.]
+        self.joypub.publish(joymessage)
 
     def scene_boarders(self):
         # define scene boarders depending on vehicle and stone initial positions and desired pose
         init_vehicle_pose = self.world_state['VehiclePos']
-        vehicle_box = self.pose_to_box(init_vehicle_pose, box=5)
+        vehicle_box = self.pose_to_box(init_vehicle_pose, box=7)
 
         stones_box = []
         for stone in range(1, self.numStones + 1):
             init_stone_pose = self.stones['StonePos' + str(stone)]
-            stones_box = self.containing_box(stones_box, self.pose_to_box(init_stone_pose, box=5))
+            stones_box = self.containing_box(stones_box, self.pose_to_box(init_stone_pose, box=7))
 
         scene_boarders = self.containing_box(vehicle_box, stones_box)
-        scene_boarders = self.containing_box(scene_boarders, self.pose_to_box(self.stone_ref[0:2], box=5)) # box=1
+        scene_boarders = self.containing_box(scene_boarders, self.pose_to_box(self.stone_ref[0:2], box=7)) # box=1
 
         return scene_boarders
 
@@ -690,7 +706,7 @@ class MoveWithStonesEnv(BaseEnv):
 
 
 class PushStonesEnv(BaseEnv):
-    def __init__(self, numStones=3):
+    def __init__(self, numStones=1):
         BaseEnv.__init__(self, numStones)
 
         # self._prev_mean_sqr_blade_dis = 9
@@ -826,7 +842,7 @@ class PushStonesEnv(BaseEnv):
         success = False
         dis = np.array(self.dis_stone_desired_pose())
 
-        TOLERANCE = 0.75
+        TOLERANCE = 1
         if all(dis < TOLERANCE):
             success = True
 
